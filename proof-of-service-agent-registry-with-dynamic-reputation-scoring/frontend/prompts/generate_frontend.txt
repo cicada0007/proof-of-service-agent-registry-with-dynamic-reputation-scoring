@@ -1,0 +1,69 @@
+You are an expert Frontend Developer specializing in decentralized web applications built with Next.js. Your task is to generate complete, production-ready frontend code for the "Proof-of-Service Agent Registry with Dynamic Reputation Scoring" project. This is a web application serving as a decentralized registry for AI agents, functioning like a "credit bureau for AI agents." It enables agents to register capabilities, track verifiable work histories, and earn dynamic reputation scores based on task completions and x402 protocol payment settlements (using SOL/USDC micropayments via HTTP 402 hooks). The system integrates Solana (Anchor/Rust) for on-chain registry, IPFS for off-chain data pinning via compressed NFTs, ZKPs (zk-SNARKs) for privacy-preserving proofs, Switchboard oracles for validations, Solana DIDs for agent ownership, and TEEs for private data handling.
+
+### Project Overview and Requirements
+- **Target Audience**: Developers (register/query agents), AI agent marketplaces (embed for listings/verification), end-users (select high-rep agents for swarms/tasks).
+- **Key Features to Implement in UI**:
+  - **Agent Registration**: Form for registering capabilities (skills e.g., NLP, auditing; metrics e.g., success rate, speed; endpoints e.g., API URLs, Solana program IDs). Use Solana wallet connection (via @solana/wallet-adapter) for DID-linked profiles with revocable keys. Integrate IPFS upload for off-chain data, mint compressed NFTs for pinning. Support ZK selective disclosure for privacy.
+  - **Dynamic Reputation Scoring**: Real-time dashboard displaying scores (public badges) updated via on-chain events from x402 settlements (escrow release on task completion). Visualize metrics like success rate, task history summaries (ZK-proven without full disclosure), oracle attestations.
+  - **Verifiable Work History**: Secure view of history using ZKPs for proofs (e.g., prove task success without revealing details). Display x402 txn proofs, third-party attestations. Privacy: Use TEEs for private off-chain views; public summaries only.
+  - **Query and Selection**: Search interface for agents by skills/metrics/reputation. Filters for high-rep agents suitable for swarms. Embeddable components for marketplaces (e.g., agent cards with reputation badges).
+  - **x402 Integration**: UI hooks for micropayment flows—e.g., buttons triggering HTTP 402 requests for API access, wallet signing for SOL/USDC settlements. Display escrow status and auto-update reputation on completion.
+  - **Privacy and Ownership**: Agent-owned data via Solana DIDs; selective disclosure toggles (e.g., reveal only success rate). Prevent doxxing with anonymized profiles.
+  - **Additional UI Elements**: Landing page with project explainer, wallet connect modal, error handling for blockchain txns (e.g., failed ZKP generation), responsive design for desktop/mobile.
+- **Technical Constraints**:
+  - Blockchain Interactions: Assume backend APIs proxy Solana RPCs (e.g., via Helius or QuickNode). Use @solana/web3.js for wallet ops, @project-serum/anchor for program interactions. Mock endpoints for testing: e.g., POST /register-agent (returns DID), GET /agents?skill=NLP&minRep=80 (returns paginated list with ZK-proofs).
+  - Off-Chain: IPFS pinning via backend (e.g., POST /pin-data with file hash). Assume backend handles compressed NFT minting on Helium or similar.
+  - x402: Frontend triggers via fetch with 402 headers; backend settles via Solana programs. UI shows loading states for settlements.
+  - Privacy: Integrate @zk-kit/protocols for ZK-SNARK UI components (e.g., proof generation modal). Use selective disclosure UI toggles.
+  - Security: Wallet adapter for all txns; no private keys in frontend. Handle errors gracefully (e.g., oracle failures).
+
+### Tech Stack and Structure
+- **Framework**: Next.js 14+ (App Router) with TypeScript.
+- **Styling**: TailwindCSS for responsive, utility-first design. Custom theme: Primary colors #0F172A (slate dark), #3B82F6 (blue accents for Solana/reputation), gradients for reputation badges (green for high scores).
+- **State Management**: Zustand for global state (e.g., wallet, current agent profile, reputation cache). Use slices for modularity: walletSlice, agentSlice, reputationSlice.
+- **UI Library**: shadcn/ui components (e.g., Button, Card, Modal, Table) for consistency. Add custom components: AgentCard (with reputation badge), ZKProofViewer (interactive disclosure).
+- **Other Dependencies**:
+  - @solana/wallet-adapter-react + providers (Phantom, Solflare).
+  - @solana/web3.js, @project-serum/anchor.
+  - ipfs-http-client for direct IPFS (fallback to backend).
+  - @tanstack/react-query for API fetching/caching (e.g., agent queries, reputation updates).
+  - lucide-react for icons (e.g., wallet icon, ZK lock).
+  - date-fns for timestamp formatting in histories.
+  - react-hot-toast for notifications (e.g., "Reputation updated!").
+- **File Structure** (Generate all files under /app and /components):
+  - **Pages/Routes** (/app):
+    - / : Landing page (hero with explainer, CTA to connect wallet/register).
+    - /register : Multi-step form for agent registration (step 1: wallet connect/DID setup; step 2: capabilities input; step 3: IPFS upload + NFT mint; step 4: ZK setup).
+    - /profile/[did] : Dynamic profile page (view/edit capabilities, reputation dashboard, work history with ZK viewer).
+    - /search : Search page with filters (skills dropdown, rep slider 0-100, speed range). Results as grid of AgentCards. Support swarm selection (multi-select with "Form Swarm" button triggering x402 prepayment).
+    - /marketplace-embed : Iframe-friendly component for external sites (agent listings with badges).
+    - /api/ : Next.js API routes as proxies (e.g., /api/register -> backend; /api/x402-settle).
+  - **Components** (/components):
+    - ui/ : shadcn wrappers (e.g., ReputationBadge: circular progress with score color-coding).
+    - AgentCard.tsx : Card with skills badges, rep score, endpoints preview, "Hire" button (x402 trigger).
+    - WalletConnectModal.tsx : Custom modal with provider selection.
+    - ZKDisclosureToggle.tsx : Switch for revealing proofs (e.g., "Prove Success Rate > 90%" button generates ZK on-click).
+    - ReputationDashboard.tsx : Charts (use Recharts: line for score over time, pie for skill breakdowns).
+    - HistoryVerifier.tsx : Table of tasks with ZK proofs, oracle icons, x402 txn links (on-chain explorer).
+  - **Stores** (/stores): Zustand stores as above.
+  - **Utils** (/utils): Helpers like formatSolanaAddress, generateZKProofStub (for dev).
+  - **Types** (/types): TS interfaces e.g., Agent { did: string; skills: string[]; repScore: number; history: ZKProof[] }.
+  - **Hooks** (/hooks): useWallet, useAgentQuery, useReputationUpdate (with polling for on-chain events).
+- **Global Setup**:
+  - layout.tsx : Root layout with Tailwind, wallet provider, QueryClientProvider, Toaster.
+  - globals.css : Custom Tailwind extensions (e.g., .rep-high { background: linear-gradient(to right, #10B981, #059669); }).
+  - next.config.js : Enable app dir, image optimization for IPFS CIDs.
+  - tsconfig.json : Strict mode, Solana types.
+- ** Responsiveness and Accessibility**: Mobile-first (Tailwind breakpoints), ARIA labels (e.g., for badges), keyboard nav for forms. Dark mode toggle via Tailwind.
+- **Performance/SEO**: SSR for landing/search (via generateStaticParams for profiles). Lazy-load charts/ZK components. Meta tags for project title/description.
+- **Testing/Dev Notes**: Include mock data (e.g., sample agents with NLP skill, 95% rep). Assume backend at localhost:3001 with endpoints like GET /agents, POST /update-rep (webhook for x402). Error boundaries for wallet disconnects. Generate README.md snippet in code comments for setup (npm i, env vars: NEXT_PUBLIC_SOLANA_RPC, NEXT_PUBLIC_BACKEND_URL).
+
+### Generation Guidelines
+- Output COMPLETE code: All files with imports, exports, and logic. Use functional components with hooks.
+- Make it production-ready: Handle edge cases (e.g., no wallet: redirect to connect; failed ZKP: fallback to oracle). Optimize for Solana mainnet (devnet flag via env).
+- Unique to Project: Incorporate specifics like x402 buttons ("Pay & Task" with 402 header), reputation as dynamic SVG badges (score-based fill), ZK modals with proof verification animation.
+- Ensure Uniqueness: Do not reuse generic boilerplate; tailor to decentralized AI registry (e.g., agent swarm preview modal showing selected reps average).
+- Length: Comprehensive but modular—focus on core flows (registration -> profile -> search).
+- Final Output Format: Zip-like structure in text (e.g., --- /app/page.tsx --- [code] ---), ready for extraction.
+
+Generate the full frontend codebase now, starting with the root layout and landing page, then components, and end with API proxies. Ensure TypeScript compliance and no console.logs in prod.

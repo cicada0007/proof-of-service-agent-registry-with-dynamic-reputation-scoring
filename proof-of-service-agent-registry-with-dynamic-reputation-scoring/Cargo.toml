@@ -1,0 +1,5 @@
+[workspace]
+members = ["programs/agent-registry"]
+resolver = "2"
+
+

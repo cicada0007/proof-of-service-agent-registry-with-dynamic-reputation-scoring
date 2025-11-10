@@ -1,0 +1,20 @@
+[workspace]
+types = "app"
+
+[features]
+seeds = false
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[programs.localnet]
+agent_registry = "AgentRegistr111111111111111111111111111111111"
+
+[registry]
+url = "https://anchor.projectserum.com"
+
+[test]
+startup_wait = 10000
+
+

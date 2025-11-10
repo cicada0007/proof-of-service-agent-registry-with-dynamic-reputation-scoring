@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Agent {
+  id          String   @id @default(cuid())
+  did         String   @unique
+  ownerPubkey String
+  name        String
+  summary     String?
+  reputation  Float    @default(0)
+  metadataCid String?
+  proofCid    String?
+  disclosure  String   @default("zk-selective")
+  endpoint    String?
+  capabilities Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  histories   WorkHistory[]
+  events      ReputationEvent[]
+}
+
+model WorkHistory {
+  id          String   @id @default(cuid())
+  agentId     String
+  taskId      String   @unique
+  outcome     String
+  zkProofCid  String?
+  settlement  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+model ReputationEvent {
+  id          String   @id @default(cuid())
+  agentId     String
+  delta       Float
+  reference   String
+  description String?
+  createdAt   DateTime @default(now())
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, createdAt])
+}
+
+

@@ -1,0 +1,292 @@
+name: CI/CD Pipeline on GitHub Push for Proof-of-Service Agent Registry
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'examples/**'
+  pull_request:
+    branches: [ main ]
+
+env:
+  NODE_VERSION: '20'
+  RUST_VERSION: '1.75'
+  SOLANA_VERSION: '1.18.4'
+  ANCHOR_VERSION: '0.30.1'
+  PROJECT_TITLE: "Proof-of-Service Agent Registry with Dynamic Reputation Scoring"
+  UNIQUE_IDENTIFIER: "1762759105673_proof_of_service_agent_registry_with_dynamic_reputation_scoring__meta_github_push_yaml_accys8"
+
+jobs:
+  lint-and-test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: |
+          npm ci --frozen-lockfile
+          npm install -g @next/eslint@14 --silent
+
+      - name: Run ESLint on frontend
+        working-directory: ./frontend
+        run: |
+          npm run lint
+        env:
+          CI: true
+
+      - name: Run TypeScript checks
+        working-directory: ./frontend
+        run: |
+          npx tsc --noEmit --project tsconfig.json
+
+      - name: Run unit tests for frontend (Zustand/Redux state management)
+        working-directory: ./frontend
+        run: |
+          npm run test:unit
+        env:
+          CI: true
+          DATABASE_URL: ${{ secrets.POSTGRES_URL_TEST }}
+
+      - name: Run E2E tests for agent registration UI (TailwindCSS/Next.js)
+        working-directory: ./frontend
+        run: |
+          npm run test:e2e
+        env:
+          CI: true
+          NEXT_PUBLIC_SOLANA_RPC: ${{ secrets.SOLANA_RPC_DEVNET }}
+          NEXT_PUBLIC_IPFS_GATEWAY: ${{ secrets.IPFS_GATEWAY }}
+
+  lint-and-test-backend:
+    runs-on: ubuntu-latest
+    needs: lint-and-test-frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: |
+          npm ci --frozen-lockfile
+
+      - name: Run ESLint on backend (Express/NestJS APIs for x402 hooks)
+        working-directory: ./backend
+        run: |
+          npm run lint
+        env:
+          CI: true
+
+      - name: Run Prisma schema validation and migrations (PostgreSQL for off-chain metadata)
+        working-directory: ./backend
+        run: |
+          npx prisma generate
+          npx prisma db push --accept-data-loss
+        env:
+          DATABASE_URL: ${{ secrets.POSTGRES_URL_TEST }}
+          DIRECT_URL: ${{ secrets.POSTGRES_DIRECT_URL_TEST }}
+
+      - name: Run integration tests for backend (x402 micropayment settlements, DID profiles)
+        working-directory: ./backend
+        run: |
+          npm run test:integration
+        env:
+          CI: true
+          SOLANA_KEYPAIR: ${{ secrets.SOLANA_TEST_KEYPAIR }}
+          X402_SECRET: ${{ secrets.X402_WEBHOOK_SECRET }}
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL_TEST }}
+          IPFS_API_TOKEN: ${{ secrets.IPFS_API_TOKEN }}
+
+  build-solana-programs:
+    runs-on: ubuntu-latest
+    needs: lint-and-test-backend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Setup Solana CLI
+        uses: mintel/solana-actions/install@v1
+        with:
+          solana-version: ${{ env.SOLANA_VERSION }}
+
+      - name: Setup Anchor
+        uses: corneliusweig/anchor-actions/setup@v1
+        with:
+          anchor-version: ${{ env.ANCHOR_VERSION }}
+
+      - name: Install Solana program dependencies (Anchor/Rust for registry contracts)
+        working-directory: ./solana-programs
+        run: |
+          anchor build -- --package registry
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+
+      - name: Build and lint Solana registry program (ZK-SNARK integration hooks)
+        working-directory: ./solana-programs
+        run: |
+          anchor build
+          anchor lint
+        env:
+          ANCHOR_PROVIDER_URL: ${{ secrets.SOLANA_RPC_DEVNET }}
+          SOLANA_KEYPAIR: ${{ secrets.SOLANA_TEST_KEYPAIR }}
+
+      - name: Run Solana program tests (reputation scoring, DID-linked profiles)
+        working-directory: ./solana-programs
+        run: |
+          anchor test --skip-local-validator
+        env:
+          ANCHOR_PROVIDER_URL: ${{ secrets.SOLANA_RPC_DEVNET }}
+          SOLANA_KEYPAIR: ${{ secrets.SOLANA_TEST_KEYPAIR }}
+          SWITCHBOARD_QUEUE_ID: ${{ secrets.SWITCHBOARD_QUEUE_ID_TEST }}
+
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [lint-and-test-frontend, lint-and-test-backend, build-solana-programs]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js for deployment
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build frontend (Next.js for agent query/selection UI)
+        working-directory: ./frontend
+        run: |
+          npm ci
+          npm run build
+        env:
+          NEXT_PUBLIC_SOLANA_RPC: ${{ secrets.SOLANA_RPC_STAGING }}
+          NEXT_PUBLIC_X402_ENDPOINT: ${{ secrets.X402_STAGING_ENDPOINT }}
+
+      - name: Deploy frontend to Vercel (staging)
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_STAGING }}
+          working-directory: ./frontend
+          scope: ${{ secrets.VERCEL_ORG_ID }}
+
+      - name: Build and deploy backend to AWS Fargate (staging, with Prisma migrations)
+        working-directory: ./backend
+        run: |
+          npm ci
+          npm run build
+          docker build -t agent-registry-backend-staging .
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+          docker tag agent-registry-backend-staging:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/agent-registry-backend-staging:latest
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/agent-registry-backend-staging:latest
+          aws ecs update-service --cluster agent-registry-cluster-staging --service agent-registry-service-staging --force-new-deployment --region us-east-1
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          DATABASE_URL: ${{ secrets.POSTGRES_URL_STAGING }}
+          IPFS_PINNING_SERVICE: ${{ secrets.IPFS_PINNING_SERVICE_STAGING }}
+
+      - name: Deploy Solana programs to devnet (Anchor for reputation scoring updates)
+        working-directory: ./solana-programs
+        run: |
+          anchor deploy --provider.cluster devnet
+        env:
+          ANCHOR_PROVIDER_URL: ${{ secrets.SOLANA_RPC_DEVNET }}
+          SOLANA_KEYPAIR: ${{ secrets.SOLANA_DEVNET_KEYPAIR }}
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [lint-and-test-frontend, lint-and-test-backend, build-solana-programs]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js for deployment
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build frontend (Next.js for production agent marketplace embeddings)
+        working-directory: ./frontend
+        run: |
+          npm ci
+          npm run build
+        env:
+          NEXT_PUBLIC_SOLANA_RPC: ${{ secrets.SOLANA_RPC_MAINNET }}
+          NEXT_PUBLIC_X402_ENDPOINT: ${{ secrets.X402_PROD_ENDPOINT }}
+
+      - name: Deploy frontend to Vercel (production)
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID_PROD }}
+          working-directory: ./frontend
+          scope: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-args: '--prod'
+
+      - name: Build and deploy backend to AWS Fargate (production, IPFS compressed NFT pinning)
+        working-directory: ./backend
+        run: |
+          npm ci
+          npm run build
+          docker build -t agent-registry-backend-prod .
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+          docker tag agent-registry-backend-prod:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/agent-registry-backend-prod:latest
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/agent-registry-backend-prod:latest
+          aws ecs update-service --cluster agent-registry-cluster-prod --service agent-registry-service-prod --force-new-deployment --region us-east-1
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          DATABASE_URL: ${{ secrets.POSTGRES_URL_PROD }}
+          IPFS_API_TOKEN: ${{ secrets.IPFS_API_TOKEN_PROD }}
+          TEE_SECRET: ${{ secrets.TEE_SECRET_PROD }}  # For private off-chain data via TEEs
+
+      - name: Deploy Solana programs to mainnet (ZKPs for verifiable work history)
+        working-directory: ./solana-programs
+        run: |
+          anchor deploy --provider.cluster mainnet
+        env:
+          ANCHOR_PROVIDER_URL: ${{ secrets.SOLANA_RPC_MAINNET }}
+          SOLANA_KEYPAIR: ${{ secrets.SOLANA_MAINNET_KEYPAIR }}
+
+  notify-on-failure:
+    runs-on: ubuntu-latest
+    if: failure()
+    needs: [lint-and-test-frontend, lint-and-test-backend, build-solana-programs, deploy-staging, deploy-production]
+    steps:
+      - name: Send failure notification (for developer/agent marketplace monitoring)
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          author_name: "Agent Registry CI/CD Pipeline"
+          text: "Build failed for ${{ env.PROJECT_TITLE }} (ID: ${{ env.UNIQUE_IDENTIFIER }}). Check logs for details on reputation scoring or x402 integration issues."
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
